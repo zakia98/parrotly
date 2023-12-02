@@ -1,0 +1,18 @@
+{
+  "protocol": "https://ameenzaki.dev/parrotly/quiz",
+  "published": true,
+  "types": {
+    "vocabulary": {
+      "schema": "https://ameenzaki.dev/parrotly/quiz/vocabulary/schema",
+      "dataFormats": ["application/json"]
+    }
+  },
+  "structure": {
+    "vocabulary": {
+      "$actions": [
+        { "who": "author", "of": "vocabulary", "can": "write" },
+        { "who": "anyone", "can": "read" }
+      ]
+    }
+  }
+}

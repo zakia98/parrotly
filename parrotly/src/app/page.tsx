@@ -1,5 +1,6 @@
 import React from "react";
 import Quiz from './Quiz'
+import VocabularyDisplay from "@/app/VocabularyDisplay";
 
 export default function Home() {
   return (

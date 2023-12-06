@@ -1,14 +1,15 @@
 'use client'
 import React, {FC, useEffect, useMemo, useState} from "react";
-import {ProtocolsQueryResponse, Web5} from "@web5/api";
+import {Web5} from "@web5/api";
 import { webcrypto } from 'node:crypto';
-import {ProtocolDefinition} from "@tbd54566975/dwn-sdk-js";
 import vocabularyProtocol from "../protocols/vocabularyProtocol.json";
 // @ts-ignore
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
 import spanish from '../dictionaries/spanish.json'
 import VocabularyDisplay from "@/app/VocabularyDisplay";
+import {useWeb5} from "@/app/Web5Provider";
+import {useFetch} from "@/app/utils";
 
 type VocabularyItem = {
     word: string,
@@ -16,8 +17,6 @@ type VocabularyItem = {
     id: number,
     lang: string
 }
-
-const protocolDefinition = vocabularyProtocol
 
 const getRandomWord = <T,>(array: T[]) => {
     return array[Math.floor(Math.random() * array.length)]
@@ -62,10 +61,25 @@ const Question: FC<{customStylingProps: any, word: string}> = ({customStylingPro
     )
 }
 
+const useGetVocabulary = () => {
+    const {web5, did} = useWeb5()
+    const [requestNumber, setRequestNumber] = useState(1)
+
+    const refresh = () => {
+        setRequestNumber(requestNumber + 1)
+    }
+
+
+    const state = useFetch(web5, did, vocabularyProtocol, {requestNumber})
+
+    return {
+        ...state,
+        refresh
+    }
+}
+
+
 const Quiz = () => {
-    const [web5, setWeb5] = useState<Web5 | null>(null);
-    const [myDid, setMyDid] = useState<string | null>(null);
-    const [userVocabulary, setUserVocabulary] = useState<VocabularyItem[]>([])
     const [currentQuestionWord, setCurrentQuestionWord] = useState<VocabularyItem>(getRandomWord(spanish))
     const [selected, setSelected] = useState({
         word: 'como',
@@ -76,26 +90,18 @@ const Quiz = () => {
 
     const [error, setError] = useState('')
 
-    const queryForProtocol = async (web5: Web5): Promise<ProtocolsQueryResponse>  => {
-        return await web5.dwn.protocols.query({
-            message: {
-                filter: {
-                    protocol: "https://ameenzaki.dev/parrotly/quiz",
-                },
-            },
-        })
-    };
+    const {web5, did: myDid} = useWeb5()
 
-    const installProtocolLocally = async (web5: Web5, protocolDefinition: ProtocolDefinition) => {
-        return await web5.dwn.protocols.configure({
-            message: {
-                definition: protocolDefinition,
-            },
-        });
-    };
+    const {
+        data: userVocabulary,
+        isFetching: isUserVocabularyFetching,
+        error: fetchError,
+        refresh
+    } = useGetVocabulary()
 
+    console.log({userVocabulary, isUserVocabularyFetching})
     const unknownWords = useMemo(() => {
-        console.log('recalculating unknown words')
+        if (!userVocabulary) return spanish
         return spanish.filter(dictionaryItem => !userVocabulary.find(userVocabularyItem => userVocabularyItem.id === dictionaryItem.id))
     }, [userVocabulary])
 
@@ -108,25 +114,10 @@ const Quiz = () => {
         return shuffleArray(quizOpts)
     }, [currentQuestionWord])
 
-    const configureProtocol = async (web5: Web5, did: string) => {
-        const { protocols: localProtocol, status: localProtocolStatus } = await queryForProtocol(web5);
-
-        console.log({ localProtocol, localProtocolStatus });
-        if (localProtocolStatus.code !== 200 || localProtocol.length === 0) {
-            const { protocol, status } = await installProtocolLocally(web5, protocolDefinition);
-            console.log("Protocol installed locally", protocol, status);
-
-            if (!protocol) {
-                setError('Failed to install protocol locally!')
-                throw new Error('PANIC: protocol failed to install locally')
-            }
-
-            const { status: configureRemoteStatus } = await protocol.send(did);
-            console.log("Did the protocol install on the remote DWN?", configureRemoteStatus);
-
-        } else {
-            console.log("Protocol already installed");
-        }
+    if (isUserVocabularyFetching || !currentQuestionWord) {
+        return (
+            <div>Loading....</div>
+        )
     }
 
     const writeToDwn = async (web5: Web5, did: string, vocabulary: VocabularyItem) => {
@@ -139,72 +130,12 @@ const Quiz = () => {
                 published: true
             },
         });
-        console.log(record)
         return record;
     };
 
-    const fetchVocabulary = async (web5: Web5) => {
-        const response = await web5.dwn.records.query({
-            message: {
-                filter: {
-                    protocol: "https://ameenzaki.dev/parrotly/quiz",
-                },
-            },
-        });
-
-        if (response.status.code === 200) {
-            if (typeof response.records === 'undefined') return []
-
-            const completedVocabularyPoints = await Promise.all(
-                response.records.map(async (record) => {
-                    return await record.data.json()
-                })
-            );
-            return completedVocabularyPoints;
-        } else {
-            console.log("error", response.status);
-        }
-    }
-
-    useEffect(() => {
-        if (!web5 || !myDid) return;
-        const intervalId = setInterval(async () => {
-            await fetchVocabulary(web5);
-        }, 2000);
-
-        return () => clearInterval(intervalId);
-    }, [web5, myDid]);
-
-    useEffect(() => {
-        const initWeb5 = async () => {
-            const { web5, did } = await Web5.connect();
-            setWeb5(web5);
-            setMyDid(did);
-
-            if (web5 && did) {
-                await configureProtocol(web5, did);
-                const vocabulary = await fetchVocabulary(web5)
-                if (vocabulary) {
-                    setUserVocabulary(vocabulary)
-                } else {
-                    console.log('no user vocabulary found')
-                }
-            }
-        };
-        initWeb5();
-    }, [])
-
-    if (!web5 || !myDid) {
-        return (
-            <div>Sorry we had some issues</div>
-        )
-    }
-
     const onChange = (wordId: string) => {
         const option = spanish.find(word => {
-            console.log(word)
             return word.id === Number(wordId)
-
         })
 
         if (option) {
@@ -215,24 +146,14 @@ const Quiz = () => {
     }
 
     const submitAnswer = async () => {
-        if (!currentQuestionWord) return
+        if (!currentQuestionWord || !web5 || !myDid) return
 
         if (selected.id === currentQuestionWord.id) {
             const record = await writeToDwn(web5, myDid, selected)
-            const vocab = await fetchVocabulary(web5)
-            console.log('fetched vocabulary', vocab)
-            if (vocab) {
-                setUserVocabulary(vocab)
-            } else {
-                console.log('no user vocabulary found')
-            }
+            refresh()
         } else {
             alert('you got the question wrong bro')
         }
-    }
-
-    if (!currentQuestionWord) {
-        return <p>loading...</p>
     }
 
     return (
